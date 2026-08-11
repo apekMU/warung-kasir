@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>LEK RO Mart - POS Warung</title>
 
     <!-- Tailwind CSS CDN -->
@@ -12,6 +12,11 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
     <!-- html5-qrcode CDN -->
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js">
+    </script>
+    <!-- Firebase SDK (v9 compat) -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js">
+    </script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js">
     </script>
 
     <style>
@@ -176,6 +181,28 @@
         #sidebar .sidebar-footer .kasir-info i {
             color: #dc2626;
             font-size: 16px;
+        }
+        #sidebar .sidebar-footer .sync-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            font-size: 12px;
+            color: #6b7280;
+        }
+        #sidebar .sidebar-footer .sync-status .sync-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #22c55e;
+            display: inline-block;
+        }
+        #sidebar .sidebar-footer .sync-status .sync-dot.offline {
+            background: #ef4444;
+        }
+        #sidebar .sidebar-footer .sync-status .sync-dot.syncing {
+            background: #f59e0b;
+            animation: pulse-dot 0.8s infinite;
         }
 
         /* ===== MAIN CONTENT ===== */
@@ -733,6 +760,9 @@
                 font-size: 12px;
                 padding: 12px 10px;
             }
+            #scanner-container {
+                max-width: 100%;
+            }
         }
         .mobile-toggle {
             display: none;
@@ -907,9 +937,60 @@
         .justify-between {
             justify-content: space-between;
         }
+
+        /* ===== LOADING ===== */
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f4f6;
+            border-radius: 50%;
+            border-top-color: #dc2626;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Toast notification */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: #1f2937;
+            color: #fff;
+            padding: 14px 24px;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.20);
+            font-size: 14px;
+            z-index: 9999;
+            max-width: 380px;
+            transform: translateY(80px);
+            opacity: 0;
+            transition: all 0.4s ease;
+            pointer-events: none;
+        }
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+        .toast.success {
+            background: #16a34a;
+        }
+        .toast.error {
+            background: #dc2626;
+        }
+        .toast.info {
+            background: #2563eb;
+        }
     </style>
 </head>
 <body>
+
+    <!-- ===== TOAST ===== -->
+    <div id="toast" class="toast"></div>
 
     <!-- ===== SIDEBAR BACKDROP (mobile) ===== -->
     <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
@@ -946,6 +1027,13 @@
             <div class="kasir-info">
                 <i class="fas fa-user-circle"></i>
                 <span><strong>Kasir:</strong> <span id="cashierName">Admin</span></span>
+            </div>
+            <div class="sync-status">
+                <span class="sync-dot" id="syncDot"></span>
+                <span id="syncStatusText">Tersambung ke Cloud</span>
+                <button class="btn-secondary text-xs" onclick="forceSync()" style="padding:2px 10px;margin-left:auto;">
+                    <i class="fas fa-sync-alt"></i> Sync
+                </button>
             </div>
         </div>
     </aside>
@@ -1137,7 +1225,7 @@
         <section class="page-section" id="page-history">
             <div class="page-header">
                 <h2><i class="fas fa-history"></i> Riwayat Transaksi</h2>
-                <span class="sub">Semua transaksi tersimpan</span>
+                <span class="sub">Semua transaksi tersimpan di cloud</span>
             </div>
             <div class="card">
                 <div class="flex justify-between items-center flex-wrap gap-2 mb-3">
@@ -1190,6 +1278,49 @@
     <!-- ============================================================ -->
     <script>
         // ===================================================================
+        //  FIREBASE CONFIGURATION
+        //  ===== GANTI DENGAN KONFIGURASI FIREBASE ANDA =====
+        // ===================================================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyDemoKey1234567890", // GANTI dengan apiKey Anda
+            authDomain: "your-project.firebaseapp.com",
+            projectId: "your-project",
+            storageBucket: "your-project.appspot.com",
+            messagingSenderId: "123456789",
+            appId: "1:123456789:web:abcdef123456"
+        };
+
+        // ===================================================================
+        //  INIT FIREBASE
+        // ===================================================================
+        let db = null;
+        let firestoreReady = false;
+        let syncListenersActive = false;
+
+        try {
+            firebase.initializeApp(firebaseConfig);
+            db = firebase.firestore();
+
+            // Enable offline persistence agar tetap bisa dipakai offline
+            db.enablePersistence({ synchronizeTabs: true })
+                .then(() => {
+                    console.log('🔥 Firestore offline persistence aktif');
+                })
+                .catch((err) => {
+                    console.warn('Firestore persistence error (mungkin multiple tabs):', err);
+                });
+
+            firestoreReady = true;
+            console.log('🔥 Firebase Firestore terinisialisasi');
+            updateSyncStatus('online');
+        } catch (e) {
+            console.warn('⚠️ Firebase gagal init, gunakan localStorage saja:', e.message);
+            firestoreReady = false;
+            updateSyncStatus('offline');
+            showToast('Firebase tidak terkonfigurasi. Data hanya disimpan lokal.', 'error');
+        }
+
+        // ===================================================================
         //  DATA & STATE
         // ===================================================================
         let products = [];
@@ -1199,55 +1330,191 @@
         let scannerInstance = null;
         let isScannerOpen = false;
         let stockScanMode = false;
+        let isSyncing = false;
+        let pendingSync = false;
 
         const CASHIER_NAME = 'Admin';
         const STORE_NAME = 'LEK RO Mart';
         const STORE_ADDR = 'Jl. Warung No. 88, Kota';
         const STORE_PHONE = '0812-3456-7890';
+        const COLLECTION_PRODUCTS = 'lekro_products';
+        const COLLECTION_TRANSACTIONS = 'lekro_transactions';
 
         // ===================================================================
-        //  INIT
+        //  TOAST
         // ===================================================================
-        document.addEventListener('DOMContentLoaded', function() {
-            loadData();
-            renderProducts();
-            renderStockTable();
-            renderCart();
-            updatePosDateTime();
-            setInterval(updatePosDateTime, 10000);
-            document.getElementById('cashierName').textContent = CASHIER_NAME;
-            // Enter key pada barcode input
-            document.getElementById('barcodeInput').addEventListener('keydown', function(e) {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    const code = this.value.trim();
-                    if (code) {
-                        addProductByBarcode(code);
-                        this.value = '';
-                    }
-                }
-            });
-            // Enter key pada cash received
-            document.getElementById('cashReceived').addEventListener('keydown', function(e) {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    processPayment();
-                }
-            });
-            // Update scanner status
-            updateScannerStatus(false);
-            // jika ada dummy data tapi kosong, seed
-            if (products.length === 0) {
-                seedDummyData();
+        function showToast(message, type = 'info', duration = 3000) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'toast ' + type + ' show';
+            clearTimeout(toast._hideTimer);
+            toast._hideTimer = setTimeout(() => {
+                toast.classList.remove('show');
+            }, duration);
+        }
+
+        // ===================================================================
+        //  SYNC STATUS
+        // ===================================================================
+        function updateSyncStatus(status) {
+            const dot = document.getElementById('syncDot');
+            const text = document.getElementById('syncStatusText');
+            dot.className = 'sync-dot';
+            if (status === 'online') {
+                dot.classList.add('online');
+                text.textContent = 'Tersambung ke Cloud';
+            } else if (status === 'offline') {
+                dot.classList.add('offline');
+                text.textContent = 'Offline — data lokal';
+            } else if (status === 'syncing') {
+                dot.classList.add('syncing');
+                text.textContent = 'Menyinkronkan...';
             }
-            // auto focus
-            document.getElementById('barcodeInput').focus();
-        });
+        }
+
+        function forceSync() {
+            if (!firestoreReady) {
+                showToast('Firebase tidak terkonfigurasi. Data hanya lokal.', 'error');
+                return;
+            }
+            showToast('Menyinkronkan data...', 'info');
+            syncAllToFirestore().then(() => {
+                showToast('Sinkronisasi selesai!', 'success');
+            }).catch(() => {
+                showToast('Gagal sinkronisasi, coba lagi.', 'error');
+            });
+        }
 
         // ===================================================================
-        //  LOCAL STORAGE
+        //  FIREBASE OPERATIONS
         // ===================================================================
-        function loadData() {
+        async function syncAllToFirestore() {
+            if (!firestoreReady || isSyncing) return;
+            isSyncing = true;
+            updateSyncStatus('syncing');
+            try {
+                // Upload semua produk
+                for (const p of products) {
+                    const docRef = db.collection(COLLECTION_PRODUCTS).doc(p.id);
+                    await docRef.set(p, { merge: true });
+                }
+                // Upload semua transaksi
+                for (const t of transactions) {
+                    const docRef = db.collection(COLLECTION_TRANSACTIONS).doc(t.id);
+                    await docRef.set(t, { merge: true });
+                }
+                updateSyncStatus('online');
+                showToast('Data berhasil disinkronkan ke cloud!', 'success');
+            } catch (e) {
+                console.error('Sync error:', e);
+                updateSyncStatus('offline');
+                showToast('Gagal sync: ' + e.message, 'error');
+            }
+            isSyncing = false;
+        }
+
+        async function loadFromFirestore() {
+            if (!firestoreReady) return false;
+            try {
+                updateSyncStatus('syncing');
+                // Load products
+                const prodSnap = await db.collection(COLLECTION_PRODUCTS).get();
+                const loadedProducts = [];
+                prodSnap.forEach(doc => {
+                    loadedProducts.push({ ...doc.data() });
+                });
+                if (loadedProducts.length > 0) {
+                    products = loadedProducts;
+                }
+
+                // Load transactions
+                const transSnap = await db.collection(COLLECTION_TRANSACTIONS).orderBy('date', 'desc').get();
+                const loadedTransactions = [];
+                transSnap.forEach(doc => {
+                    loadedTransactions.push({ ...doc.data() });
+                });
+                if (loadedTransactions.length > 0) {
+                    transactions = loadedTransactions;
+                }
+
+                updateSyncStatus('online');
+                return true;
+            } catch (e) {
+                console.warn('Load from Firestore error:', e);
+                updateSyncStatus('offline');
+                return false;
+            }
+        }
+
+        // ===================================================================
+        //  REAL-TIME LISTENERS
+        // ===================================================================
+        function startFirestoreListeners() {
+            if (!firestoreReady || syncListenersActive) return;
+            syncListenersActive = true;
+
+            // Listener produk
+            db.collection(COLLECTION_PRODUCTS).onSnapshot((snap) => {
+                const changed = [];
+                snap.docChanges().forEach(change => {
+                    if (change.type === 'modified' || change.type === 'added') {
+                        changed.push({ ...change.doc.data() });
+                    }
+                });
+                if (changed.length > 0) {
+                    // Merge dengan produk lokal
+                    for (const c of changed) {
+                        const idx = products.findIndex(p => p.id === c.id);
+                        if (idx >= 0) {
+                            products[idx] = c;
+                        } else {
+                            products.push(c);
+                        }
+                    }
+                    // Simpan ke localStorage
+                    saveDataLocal();
+                    // Render ulang
+                    renderAllUI();
+                    showToast('Data produk diperbarui dari cloud', 'info', 1500);
+                }
+            }, (err) => {
+                console.warn('Products listener error:', err);
+                updateSyncStatus('offline');
+            });
+
+            // Listener transaksi
+            db.collection(COLLECTION_TRANSACTIONS).orderBy('date', 'desc').onSnapshot((snap) => {
+                const changed = [];
+                snap.docChanges().forEach(change => {
+                    if (change.type === 'modified' || change.type === 'added') {
+                        changed.push({ ...change.doc.data() });
+                    }
+                });
+                if (changed.length > 0) {
+                    for (const c of changed) {
+                        const idx = transactions.findIndex(t => t.id === c.id);
+                        if (idx >= 0) {
+                            transactions[idx] = c;
+                        } else {
+                            transactions.push(c);
+                        }
+                    }
+                    // Urutkan
+                    transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
+                    saveDataLocal();
+                    renderAllUI();
+                    showToast('Riwayat transaksi diperbarui dari cloud', 'info', 1500);
+                }
+            }, (err) => {
+                console.warn('Transactions listener error:', err);
+                updateSyncStatus('offline');
+            });
+        }
+
+        // ===================================================================
+        //  LOCAL STORAGE (fallback & cache)
+        // ===================================================================
+        function loadDataLocal() {
             try {
                 const p = localStorage.getItem('lekro_products');
                 products = p ? JSON.parse(p) : [];
@@ -1262,10 +1529,96 @@
             }
         }
 
-        function saveData() {
+        function saveDataLocal() {
             localStorage.setItem('lekro_products', JSON.stringify(products));
             localStorage.setItem('lekro_cart', JSON.stringify(cart));
             localStorage.setItem('lekro_transactions', JSON.stringify(transactions));
+        }
+
+        function saveData() {
+            saveDataLocal();
+            // Jika Firebase tersedia, sync ke cloud secara async (tanpa blocking)
+            if (firestoreReady && !isSyncing) {
+                // Debounce: tunggu sebentar sebelum sync
+                clearTimeout(window._syncDebounce);
+                window._syncDebounce = setTimeout(() => {
+                    syncAllToFirestore().catch(() => {});
+                }, 500);
+            }
+        }
+
+        // ===================================================================
+        //  INIT
+        // ===================================================================
+        document.addEventListener('DOMContentLoaded', async function() {
+            // Load data dari localStorage dulu (cepat)
+            loadDataLocal();
+
+            // Jika Firestore ready, coba load data dari cloud
+            if (firestoreReady) {
+                const loaded = await loadFromFirestore();
+                if (loaded) {
+                    // Data dari cloud lebih baru, simpan ke localStorage
+                    saveDataLocal();
+                    showToast('Data dimuat dari cloud', 'success', 1500);
+                } else {
+                    // Jika gagal load dari cloud, seed dummy jika kosong
+                    if (products.length === 0) {
+                        seedDummyData();
+                    }
+                    // Upload data lokal ke cloud
+                    await syncAllToFirestore();
+                }
+                // Mulai listener real-time
+                startFirestoreListeners();
+            } else {
+                // Fallback: seed dummy jika kosong
+                if (products.length === 0) {
+                    seedDummyData();
+                }
+                updateSyncStatus('offline');
+            }
+
+            // Render semua UI
+            renderAllUI();
+            updatePosDateTime();
+            setInterval(updatePosDateTime, 10000);
+            document.getElementById('cashierName').textContent = CASHIER_NAME;
+
+            // Event listeners
+            document.getElementById('barcodeInput').addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const code = this.value.trim();
+                    if (code) {
+                        addProductByBarcode(code);
+                        this.value = '';
+                    }
+                }
+            });
+            document.getElementById('cashReceived').addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    processPayment();
+                }
+            });
+            updateScannerStatus(false);
+            document.getElementById('barcodeInput').focus();
+
+            console.log('🛒 LEK RO Mart - POS Warung siap (dengan Firebase sync)');
+            console.log('📦 ' + products.length + ' produk, ' + transactions.length + ' transaksi.');
+            console.log('⌨️  Ctrl+1 POS | Ctrl+2 Stock | Ctrl+3 History | F1 Scanner');
+        });
+
+        // ===================================================================
+        //  RENDER ALL UI
+        // ===================================================================
+        function renderAllUI() {
+            renderProducts(document.getElementById('searchProduct')?.value || '');
+            renderStockTable();
+            renderCart();
+            renderHistory();
+            updateStockCount();
         }
 
         // ===================================================================
@@ -1273,22 +1626,33 @@
         // ===================================================================
         function seedDummyData() {
             const dummy = [
-                { name: 'Beras 5kg', category: 'Sembako', buyPrice: 55000, sellPrice: 65000, stock: 12, barcode: '899123456001' },
-                { name: 'Minyak Goreng 1L', category: 'Sembako', buyPrice: 15000, sellPrice: 18000, stock: 8, barcode: '899123456002' },
-                { name: 'Mi Instan Goreng', category: 'Makanan', buyPrice: 2500, sellPrice: 3500, stock: 30, barcode: '899123456003' },
-                { name: 'Kopi Bubuk 100g', category: 'Minuman', buyPrice: 8000, sellPrice: 12000, stock: 15, barcode: '899123456004' },
-                { name: 'Gula Pasir 1kg', category: 'Sembako', buyPrice: 14000, sellPrice: 17000, stock: 10, barcode: '899123456005' },
-                { name: 'Telur Ayam 1kg', category: 'Protein', buyPrice: 22000, sellPrice: 28000, stock: 6, barcode: '899123456006' },
-                { name: 'Sabun Mandi', category: 'Kebersihan', buyPrice: 3500, sellPrice: 5000, stock: 20, barcode: '899123456007' },
-                { name: 'Rokok Kretek', category: 'Tembakau', buyPrice: 18000, sellPrice: 22000, stock: 5, barcode: '899123456008' },
-                { name: 'Air Mineral 1L', category: 'Minuman', buyPrice: 3000, sellPrice: 4500, stock: 25, barcode: '899123456009' },
-                { name: 'Roti Tawar', category: 'Makanan', buyPrice: 8000, sellPrice: 11000, stock: 7, barcode: '899123456010' },
+                { name: 'Beras 5kg', category: 'Sembako', buyPrice: 55000, sellPrice: 65000, stock: 12,
+                barcode: '899123456001' },
+                { name: 'Minyak Goreng 1L', category: 'Sembako', buyPrice: 15000, sellPrice: 18000, stock: 8,
+                    barcode: '899123456002' },
+                { name: 'Mi Instan Goreng', category: 'Makanan', buyPrice: 2500, sellPrice: 3500, stock: 30,
+                    barcode: '899123456003' },
+                { name: 'Kopi Bubuk 100g', category: 'Minuman', buyPrice: 8000, sellPrice: 12000, stock: 15,
+                    barcode: '899123456004' },
+                { name: 'Gula Pasir 1kg', category: 'Sembako', buyPrice: 14000, sellPrice: 17000, stock: 10,
+                    barcode: '899123456005' },
+                { name: 'Telur Ayam 1kg', category: 'Protein', buyPrice: 22000, sellPrice: 28000, stock: 6,
+                    barcode: '899123456006' },
+                { name: 'Sabun Mandi', category: 'Kebersihan', buyPrice: 3500, sellPrice: 5000, stock: 20,
+                    barcode: '899123456007' },
+                { name: 'Rokok Kretek', category: 'Tembakau', buyPrice: 18000, sellPrice: 22000, stock: 5,
+                    barcode: '899123456008' },
+                { name: 'Air Mineral 1L', category: 'Minuman', buyPrice: 3000, sellPrice: 4500, stock: 25,
+                    barcode: '899123456009' },
+                { name: 'Roti Tawar', category: 'Makanan', buyPrice: 8000, sellPrice: 11000, stock: 7,
+                    barcode: '899123456010' },
             ];
+            // Tambahkan ID unik
+            dummy.forEach(p => {
+                p.id = 'prod_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+            });
             products = dummy;
             saveData();
-            renderProducts();
-            renderStockTable();
-            updateStockCount();
         }
 
         // ===================================================================
@@ -1306,10 +1670,8 @@
         }
 
         function toggleSidebar() {
-            const sb = document.getElementById('sidebar');
-            const bd = document.getElementById('sidebarBackdrop');
-            sb.classList.toggle('open');
-            bd.classList.toggle('open');
+            document.getElementById('sidebar').classList.toggle('open');
+            document.getElementById('sidebarBackdrop').classList.toggle('open');
         }
 
         function closeSidebar() {
@@ -1337,7 +1699,7 @@
         }
 
         function generateId() {
-            return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+            return 'id_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
         }
 
         function generateInvoice() {
@@ -1350,7 +1712,7 @@
         }
 
         // ===================================================================
-        //  SCANNER (html5-qrcode) - DIPERBAIKI
+        //  SCANNER (html5-qrcode) - OPTIMIZED FOR HP
         // ===================================================================
         function toggleScanner() {
             if (isScannerOpen) {
@@ -1368,10 +1730,10 @@
 
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 status.textContent = '❌ Kamera tidak didukung';
+                showToast('Kamera tidak didukung di perangkat ini', 'error');
                 return;
             }
 
-            // Tampilkan container
             container.style.display = 'block';
             btn.classList.add('btn-primary');
             btn.classList.remove('btn-secondary');
@@ -1380,7 +1742,6 @@
             status.textContent = '🔴 Mengakses kamera...';
             updateScannerStatus(true);
 
-            // Bersihkan instance sebelumnya
             if (scannerInstance) {
                 try { scannerInstance.clear(); } catch (e) {}
                 scannerInstance = null;
@@ -1392,17 +1753,20 @@
             try {
                 scannerInstance = new Html5Qrcode('scanner-reader');
                 scannerInstance.start({ facingMode: 'environment' }, {
-                    fps: 15,
-                    qrbox: { width: 250, height: 200 }
+                    fps: 20,
+                    qrbox: { width: 220, height: 180 },
+                    aspectRatio: 1.0
                 }, onScanSuccess, onScanError);
+                showToast('Kamera aktif, arahkan ke barcode', 'info', 2000);
             } catch (err) {
-                status.textContent = '❌ Gagal mengakses kamera: ' + err.message;
+                status.textContent = '❌ Gagal: ' + err.message;
                 isScannerOpen = false;
                 txt.textContent = 'Buka Kamera';
                 btn.classList.remove('btn-primary');
                 btn.classList.add('btn-secondary');
                 container.style.display = 'none';
                 updateScannerStatus(false);
+                showToast('Gagal akses kamera: ' + err.message, 'error');
             }
         }
 
@@ -1421,36 +1785,32 @@
             isScannerOpen = false;
             document.getElementById('scanStatus').textContent = 'Manual';
             updateScannerStatus(false);
-            // Jika mode stock scan, matikan
             stockScanMode = false;
         }
 
         function onScanSuccess(decodedText) {
-            // Vibrasi jika support
             try { navigator.vibrate && navigator.vibrate(80); } catch (e) {}
 
-            // Jika mode stock scan
             if (stockScanMode) {
                 document.getElementById('pBarcode').value = decodedText;
                 document.getElementById('scanner-result').textContent = '✅ Barcode terisi: ' + decodedText;
                 stockScanMode = false;
                 closeScanner();
+                showToast('Barcode berhasil di-scan!', 'success', 1500);
                 return;
             }
 
-            // Mode POS
             document.getElementById('barcodeInput').value = decodedText;
-            document.getElementById('scanner-result').textContent = '📦 Barcode terdeteksi: ' + decodedText;
+            document.getElementById('scanner-result').textContent = '📦 Barcode: ' + decodedText;
             addProductByBarcode(decodedText);
-            // Tutup scanner setelah berhasil
             setTimeout(() => {
                 closeScanner();
                 document.getElementById('barcodeInput').focus();
-            }, 400);
+            }, 300);
         }
 
         function onScanError(err) {
-            // Abaikan error scanning (biasanya noise)
+            // Abaikan error scanning
         }
 
         function updateScannerStatus(active) {
@@ -1484,7 +1844,7 @@
                 return;
             }
             container.innerHTML = list.map(p => `
-                    <div class="product-card" onclick="addProductToCart('${p.id || p.barcode || p.name}')">
+                    <div class="product-card" onclick="addProductToCart('${p.id}')">
                         <div class="p-name">${p.name}</div>
                         <div class="p-price">${formatRupiah(p.sellPrice)}</div>
                         <div class="p-stock">Stok: ${p.stock || 0}</div>
@@ -1505,36 +1865,35 @@
             const product = products.find(p => p.barcode === barcode);
             if (!product) {
                 document.getElementById('scanner-result').textContent = '❌ Barang tidak ditemukan!';
+                showToast('Barcode tidak ditemukan', 'error');
                 return;
             }
-            addProductToCart(product.id || product.barcode || product.name);
+            addProductToCart(product.id);
         }
 
-        function addProductToCart(identifier) {
-            const product = products.find(p => (p.id === identifier) || (p.barcode === identifier) || (p.name === identifier));
+        function addProductToCart(productId) {
+            const product = products.find(p => p.id === productId);
             if (!product) {
-                alert('Produk tidak ditemukan!');
+                showToast('Produk tidak ditemukan!', 'error');
                 return;
             }
             if ((product.stock || 0) <= 0) {
-                alert('Stok habis!');
+                showToast('Stok habis!', 'error');
                 return;
             }
-            // cek di cart
-            const existing = cart.find(c => c.productId === (product.id || product.barcode));
+            const existing = cart.find(c => c.productId === productId);
             if (existing) {
                 if (existing.qty >= (product.stock || 0)) {
-                    alert('Stok tidak mencukupi!');
+                    showToast('Stok tidak mencukupi!', 'error');
                     return;
                 }
                 existing.qty += 1;
             } else {
                 cart.push({
-                    productId: product.id || product.barcode || product.name,
+                    productId: productId,
                     name: product.name,
                     price: product.sellPrice,
-                    qty: 1,
-                    maxStock: product.stock || 0
+                    qty: 1
                 });
             }
             saveData();
@@ -1543,6 +1902,7 @@
             document.getElementById('scanner-result').textContent = '✅ ' + product.name + ' ditambahkan!';
             document.getElementById('barcodeInput').value = '';
             document.getElementById('barcodeInput').focus();
+            showToast(product.name + ' ditambahkan ke keranjang', 'success', 1000);
         }
 
         function renderCart() {
@@ -1583,9 +1943,9 @@
             if (newQty < 1) {
                 cart.splice(idx, 1);
             } else {
-                const product = products.find(p => (p.id === item.productId) || (p.barcode === item.productId));
+                const product = products.find(p => p.id === item.productId);
                 if (product && newQty > (product.stock || 0)) {
-                    alert('Stok tidak mencukupi!');
+                    showToast('Stok tidak mencukupi!', 'error');
                     return;
                 }
                 item.qty = newQty;
@@ -1635,38 +1995,37 @@
 
         function processPayment() {
             if (cart.length === 0) {
-                alert('Keranjang kosong!');
+                showToast('Keranjang kosong!', 'error');
                 return;
             }
             const total = getTotal();
             const received = parseInt(document.getElementById('cashReceived').value) || 0;
             if (received < total) {
-                alert('Uang diterima kurang!');
+                showToast('Uang diterima kurang!', 'error');
                 return;
             }
             const change = received - total;
 
-            // kurangi stok
+            // Kurangi stok
             cart.forEach(cartItem => {
-                const product = products.find(p => (p.id === cartItem.productId) || (p.barcode === cartItem.productId));
+                const product = products.find(p => p.id === cartItem.productId);
                 if (product) {
                     product.stock = (product.stock || 0) - cartItem.qty;
                     if (product.stock < 0) product.stock = 0;
                 }
             });
 
-            // buat transaksi
             const invoice = generateInvoice();
             const transaction = {
-                id: invoice,
+                id: generateId(),
+                invoice: invoice,
                 date: new Date().toISOString(),
                 cashier: CASHIER_NAME,
                 items: cart.map(c => ({ ...c })),
                 subtotal: total,
                 total: total,
                 received: received,
-                change: change,
-                invoice: invoice
+                change: change
             };
             transactions.push(transaction);
             currentTransaction = transaction;
@@ -1678,8 +2037,13 @@
             renderProducts(document.getElementById('searchProduct').value);
             document.getElementById('cashReceived').value = '';
             document.getElementById('changeDisplay').textContent = 'Rp 0';
-            // tampilkan struk
             showReceipt(transaction);
+            showToast('Transaksi berhasil!', 'success', 2000);
+
+            // Sync ke cloud
+            if (firestoreReady) {
+                syncAllToFirestore().catch(() => {});
+            }
         }
 
         // ===================================================================
@@ -1761,10 +2125,10 @@
                             <td>${stock}</td>
                             <td><span class="badge ${badge}">${status}</span></td>
                             <td style="text-align:center;">
-                                <button class="btn-secondary text-xs" onclick="restockProduct(${idx})" style="padding:4px 12px;">
+                                <button class="btn-secondary text-xs" onclick="restockProduct('${p.id}')" style="padding:4px 12px;">
                                     <i class="fas fa-plus"></i> Restok
                                 </button>
-                                <button class="btn-danger text-xs" onclick="deleteProduct(${idx})" style="padding:4px 12px;margin-left:4px;">
+                                <button class="btn-danger text-xs" onclick="deleteProduct('${p.id}')" style="padding:4px 12px;margin-left:4px;">
                                     <i class="fas fa-trash"></i>
                                 </button>
                             </td>
@@ -1778,28 +2142,39 @@
             document.getElementById('stockCount').textContent = products.length;
         }
 
-        function restockProduct(idx) {
-            const p = products[idx];
+        function restockProduct(productId) {
+            const p = products.find(pr => pr.id === productId);
             if (!p) return;
             const amount = prompt(`Tambah stok untuk "${p.name}":`, '5');
             if (amount === null) return;
             const num = parseInt(amount);
             if (isNaN(num) || num <= 0) {
-                alert('Masukkan angka positif!');
+                showToast('Masukkan angka positif!', 'error');
                 return;
             }
             p.stock = (p.stock || 0) + num;
             saveData();
             renderStockTable();
             renderProducts(document.getElementById('searchProduct').value);
+            showToast(`Stok ${p.name} bertambah ${num}`, 'success');
+            // Sync ke cloud
+            if (firestoreReady) {
+                syncAllToFirestore().catch(() => {});
+            }
         }
 
-        function deleteProduct(idx) {
+        function deleteProduct(productId) {
             if (!confirm('Hapus produk ini?')) return;
+            const idx = products.findIndex(p => p.id === productId);
+            if (idx === -1) return;
             products.splice(idx, 1);
             saveData();
             renderStockTable();
             renderProducts(document.getElementById('searchProduct').value);
+            showToast('Produk dihapus', 'info');
+            if (firestoreReady) {
+                syncAllToFirestore().catch(() => {});
+            }
         }
 
         // ===================================================================
@@ -1814,18 +2189,17 @@
             const stock = parseInt(document.getElementById('pStock').value) || 0;
             const barcode = document.getElementById('pBarcode').value.trim() || ('BRG' + Date.now().toString(36).toUpperCase());
 
-            if (!name) { alert('Nama barang wajib diisi!'); return; }
-            if (sellPrice <= 0) { alert('Harga jual harus lebih dari 0!'); return; }
+            if (!name) { showToast('Nama barang wajib diisi!', 'error'); return; }
+            if (sellPrice <= 0) { showToast('Harga jual harus lebih dari 0!', 'error'); return; }
 
-            // cek duplikat barcode
             const exist = products.find(p => p.barcode === barcode && p.name !== name);
             if (exist) {
-                alert('Barcode sudah digunakan untuk produk lain!');
+                showToast('Barcode sudah digunakan untuk produk lain!', 'error');
                 return;
             }
 
             const newProduct = {
-                id: 'prod_' + Date.now().toString(36),
+                id: generateId(),
                 name: name,
                 category: category || 'Umum',
                 buyPrice: buyPrice,
@@ -1841,6 +2215,11 @@
             document.getElementById('stockFormMessage').innerHTML =
                 `<span class="text-green-600"><i class="fas fa-check-circle"></i> Produk "${name}" berhasil ditambahkan!</span>`;
             setTimeout(() => { document.getElementById('stockFormMessage').innerHTML = ''; }, 3000);
+            showToast(`Produk "${name}" berhasil ditambahkan!`, 'success');
+
+            if (firestoreReady) {
+                syncAllToFirestore().catch(() => {});
+            }
         }
 
         function resetProductForm() {
@@ -1858,6 +2237,7 @@
             stockScanMode = true;
             document.getElementById('scanStatus').textContent = '🔴 Mode scan untuk barcode...';
             openScanner();
+            showToast('Arahkan kamera ke barcode produk', 'info', 2000);
         }
 
         // ===================================================================
@@ -1901,6 +2281,15 @@
             transactions = [];
             saveData();
             renderHistory();
+            if (firestoreReady) {
+                // Hapus semua di Firestore
+                db.collection(COLLECTION_TRANSACTIONS).get().then(snap => {
+                    const batch = db.batch();
+                    snap.forEach(doc => batch.delete(doc.ref));
+                    return batch.commit();
+                }).catch(() => {});
+            }
+            showToast('Riwayat dihapus', 'info');
         }
 
         // ===================================================================
@@ -1930,7 +2319,7 @@
         });
 
         // ===================================================================
-        //  CLEANUP SCANNER SAAT PAGE UNLOAD
+        //  CLEANUP
         // ===================================================================
         window.addEventListener('beforeunload', function() {
             if (scannerInstance) {
@@ -1947,7 +2336,7 @@
         });
 
         // ===================================================================
-        //  AUTO FOCUS BARCODE INPUT
+        //  AUTO FOCUS
         // ===================================================================
         document.addEventListener('click', function() {
             if (document.getElementById('page-pos').classList.contains('active') && !isScannerOpen) {
@@ -1958,9 +2347,10 @@
             }
         });
 
-        console.log('🛒 LEK RO Mart - POS Warung siap (tanpa PPN)');
-        console.log('📦 ' + products.length + ' produk, ' + transactions.length + ' transaksi tersimpan.');
-        console.log('⌨️  Shortcut: Ctrl+1 POS | Ctrl+2 Stock | Ctrl+3 History | F1 Scanner');
+        console.log('🛒 LEK RO Mart - POS dengan Firebase sync siap!');
+        console.log('📦 ' + products.length + ' produk, ' + transactions.length + ' transaksi.');
+        console.log('⌨️  Ctrl+1 POS | Ctrl+2 Stock | Ctrl+3 History | F1 Scanner');
+        console.log('📡 Status Firestore:', firestoreReady ? 'Tersambung' : 'Offline');
     </script>
 
 </body>
