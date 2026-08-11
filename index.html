@@ -2132,19 +2132,57 @@ function startScanner(){
 
     if(scanner) return;
 
-    scanner=new Html5Qrcode("reader");
+    scanner = new Html5Qrcode("reader");
 
-scanner.start(
-    { facingMode: { exact: "environment" } },
-    {
-        fps:15,
+function startScanner(){
+
+    if(scanner) return;
+
+    scanner = new Html5Qrcode("reader");
+
+    const config = {
+        fps: 15,
         qrbox: {
-            width:300,
-            height:180
+            width: 320,
+            height: 160
         },
         aspectRatio: 1.777778,
         disableFlip: false
-    },
+    };
+
+    scanner.start(
+        { facingMode: "environment" },
+        config,
+
+        function(decodedText){
+
+            console.log("BARCODE TERBACA:", decodedText);
+
+            document.getElementById("scannerStatus").textContent =
+                "✅ Barcode terbaca: " + decodedText;
+
+            processBarcode(decodedText);
+
+            setTimeout(function(){
+                closeScanner();
+            },700);
+
+        },
+
+        function(errorMessage){
+            // Tidak perlu menampilkan error setiap frame
+        }
+
+    ).catch(function(error){
+
+        console.error("Scanner error:", error);
+
+        document.getElementById("scannerStatus").textContent =
+            "❌ Kamera gagal membaca barcode.";
+
+    });
+
+}
 
         decodedText=>{
 
