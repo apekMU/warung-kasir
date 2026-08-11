@@ -904,7 +904,28 @@ oninput="renderProducts()">
 
 <div class="form-group">
 <label>Barcode</label>
-<input id="productBarcode" placeholder="Contoh: 8991234567890">
+
+<div style="display:flex;gap:8px;">
+    <input 
+        id="productBarcode" 
+        placeholder="Scan atau masukkan barcode"
+        style="flex:1;"
+    >
+
+    <button 
+        type="button"
+        class="btn btn-info"
+        onclick="openScanner('product')"
+        style="white-space:nowrap;"
+    >
+        📷 Scan
+    </button>
+</div>
+
+<small style="color:#777;">
+    Klik Scan untuk menggunakan kamera HP.
+</small>
+
 </div>
 
 <div class="form-group">
@@ -2153,32 +2174,43 @@ function startScanner(){
 
 }
 
-
 function processBarcode(barcode){
 
-    const clean=String(barcode).trim();
+    const clean = String(barcode).trim();
 
-    const product=data.products.find(p=>p.barcode===clean);
+    // Jika scanner dipakai dari TAMBAH BARANG
+    if(scannerTarget === "product"){
 
-    if(!product){
+        document.getElementById("productBarcode").value = clean;
 
-        alert(
-            "Barcode "+clean+
-            " belum terdaftar.\\n\\n"+
-            "Silakan tambahkan barang terlebih dahulu."
-        );
+        toast("Barcode berhasil dibaca: " + clean);
 
         return;
-
     }
 
-    if(scannerTarget==="kasir"){
+    // Jika scanner dipakai dari KASIR
+    if(scannerTarget === "kasir"){
+
+        const product = data.products.find(
+            p => p.barcode === clean
+        );
+
+        if(!product){
+
+            alert(
+                "Barcode " + clean +
+                " belum terdaftar.\n\n" +
+                "Silakan tambahkan barang terlebih dahulu."
+            );
+
+            return;
+        }
 
         addBarcodeToCart(clean);
-
     }
 
 }
+
 
 
 function manualScan(){
@@ -2201,29 +2233,7 @@ function manualScan(){
 }
 
 
-async function closeScanner(){
 
-    document.getElementById("scannerModal").classList.remove("show");
-
-    if(scanner){
-
-        try{
-
-            await scanner.stop();
-
-        }catch(e){}
-
-        try{
-
-            scanner.clear();
-
-        }catch(e){}
-
-        scanner=null;
-
-    }
-
-}
 
 
 /* =========================
@@ -2242,7 +2252,24 @@ function formatDate(date){
 
 }
 
+async function closeScanner(){
 
+    document.getElementById("scannerModal").classList.remove("show");
+
+    if(scanner){
+
+        try{
+            await scanner.stop();
+        }catch(e){}
+
+        try{
+            scanner.clear();
+        }catch(e){}
+
+        scanner=null;
+    }
+
+}
 /* =========================
    INIT
 ========================= */
