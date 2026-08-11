@@ -2134,17 +2134,17 @@ function startScanner(){
 
     scanner=new Html5Qrcode("reader");
 
-    scanner.start(
-
-        {facingMode:"environment"},
-
-        {
-            fps:10,
-            qrbox:{
-                width:250,
-                height:150
-            }
+scanner.start(
+    { facingMode: { exact: "environment" } },
+    {
+        fps:15,
+        qrbox: {
+            width:300,
+            height:180
         },
+        aspectRatio: 1.777778,
+        disableFlip: false
+    },
 
         decodedText=>{
 
