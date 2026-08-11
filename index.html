@@ -476,6 +476,8 @@
         #scanner-container video {
             width: 100%;
             display: block;
+            min-height: 200px;
+            background: #111;
         }
         #scanner-container .scanner-overlay {
             position: absolute;
@@ -484,6 +486,14 @@
             pointer-events: none;
             border-radius: 12px;
             box-shadow: inset 0 0 40px rgba(220, 38, 38, 0.10);
+        }
+        #scanner-container .scanner-error {
+            color: #fff;
+            background: rgba(220, 38, 38, 0.8);
+            padding: 10px;
+            text-align: center;
+            font-size: 14px;
+            border-radius: 0 0 12px 12px;
         }
 
         /* ===== KERANJANG ===== */
@@ -1074,11 +1084,15 @@
                             <button class="btn-secondary" onclick="toggleScanner()" id="scanBtn">
                                 <i class="fas fa-camera"></i> <span id="scanBtnText">Buka Kamera</span>
                             </button>
+                            <button class="btn-secondary text-xs" onclick="manualBarcodeInput()" id="manualBtn" title="Masukkan manual">
+                                <i class="fas fa-keyboard"></i>
+                            </button>
                             <span class="text-xs text-gray-400" id="scanStatus">Manual</span>
                         </div>
                         <div id="scanner-container" style="display:none;margin-top:12px;max-width:100%;">
                             <div id="scanner-reader" style="width:100%;"></div>
                             <div class="scanner-overlay"></div>
+                            <div id="scannerError" class="scanner-error" style="display:none;"></div>
                         </div>
                         <div id="scanner-result" class="mt-2 text-sm text-gray-500"></div>
                     </div>
@@ -1300,16 +1314,9 @@
         try {
             firebase.initializeApp(firebaseConfig);
             db = firebase.firestore();
-
-            // Enable offline persistence agar tetap bisa dipakai offline
             db.enablePersistence({ synchronizeTabs: true })
-                .then(() => {
-                    console.log('🔥 Firestore offline persistence aktif');
-                })
-                .catch((err) => {
-                    console.warn('Firestore persistence error (mungkin multiple tabs):', err);
-                });
-
+                .then(() => console.log('🔥 Firestore offline persistence aktif'))
+                .catch(err => console.warn('Firestore persistence error:', err));
             firestoreReady = true;
             console.log('🔥 Firebase Firestore terinisialisasi');
             updateSyncStatus('online');
@@ -1331,7 +1338,6 @@
         let isScannerOpen = false;
         let stockScanMode = false;
         let isSyncing = false;
-        let pendingSync = false;
 
         const CASHIER_NAME = 'Admin';
         const STORE_NAME = 'LEK RO Mart';
@@ -1393,15 +1399,11 @@
             isSyncing = true;
             updateSyncStatus('syncing');
             try {
-                // Upload semua produk
                 for (const p of products) {
-                    const docRef = db.collection(COLLECTION_PRODUCTS).doc(p.id);
-                    await docRef.set(p, { merge: true });
+                    await db.collection(COLLECTION_PRODUCTS).doc(p.id).set(p, { merge: true });
                 }
-                // Upload semua transaksi
                 for (const t of transactions) {
-                    const docRef = db.collection(COLLECTION_TRANSACTIONS).doc(t.id);
-                    await docRef.set(t, { merge: true });
+                    await db.collection(COLLECTION_TRANSACTIONS).doc(t.id).set(t, { merge: true });
                 }
                 updateSyncStatus('online');
                 showToast('Data berhasil disinkronkan ke cloud!', 'success');
@@ -1417,25 +1419,15 @@
             if (!firestoreReady) return false;
             try {
                 updateSyncStatus('syncing');
-                // Load products
                 const prodSnap = await db.collection(COLLECTION_PRODUCTS).get();
                 const loadedProducts = [];
-                prodSnap.forEach(doc => {
-                    loadedProducts.push({ ...doc.data() });
-                });
-                if (loadedProducts.length > 0) {
-                    products = loadedProducts;
-                }
+                prodSnap.forEach(doc => loadedProducts.push({ ...doc.data() }));
+                if (loadedProducts.length > 0) products = loadedProducts;
 
-                // Load transactions
                 const transSnap = await db.collection(COLLECTION_TRANSACTIONS).orderBy('date', 'desc').get();
                 const loadedTransactions = [];
-                transSnap.forEach(doc => {
-                    loadedTransactions.push({ ...doc.data() });
-                });
-                if (loadedTransactions.length > 0) {
-                    transactions = loadedTransactions;
-                }
+                transSnap.forEach(doc => loadedTransactions.push({ ...doc.data() }));
+                if (loadedTransactions.length > 0) transactions = loadedTransactions;
 
                 updateSyncStatus('online');
                 return true;
@@ -1446,14 +1438,10 @@
             }
         }
 
-        // ===================================================================
-        //  REAL-TIME LISTENERS
-        // ===================================================================
         function startFirestoreListeners() {
             if (!firestoreReady || syncListenersActive) return;
             syncListenersActive = true;
 
-            // Listener produk
             db.collection(COLLECTION_PRODUCTS).onSnapshot((snap) => {
                 const changed = [];
                 snap.docChanges().forEach(change => {
@@ -1462,18 +1450,12 @@
                     }
                 });
                 if (changed.length > 0) {
-                    // Merge dengan produk lokal
                     for (const c of changed) {
                         const idx = products.findIndex(p => p.id === c.id);
-                        if (idx >= 0) {
-                            products[idx] = c;
-                        } else {
-                            products.push(c);
-                        }
+                        if (idx >= 0) products[idx] = c;
+                        else products.push(c);
                     }
-                    // Simpan ke localStorage
                     saveDataLocal();
-                    // Render ulang
                     renderAllUI();
                     showToast('Data produk diperbarui dari cloud', 'info', 1500);
                 }
@@ -1482,7 +1464,6 @@
                 updateSyncStatus('offline');
             });
 
-            // Listener transaksi
             db.collection(COLLECTION_TRANSACTIONS).orderBy('date', 'desc').onSnapshot((snap) => {
                 const changed = [];
                 snap.docChanges().forEach(change => {
@@ -1493,13 +1474,9 @@
                 if (changed.length > 0) {
                     for (const c of changed) {
                         const idx = transactions.findIndex(t => t.id === c.id);
-                        if (idx >= 0) {
-                            transactions[idx] = c;
-                        } else {
-                            transactions.push(c);
-                        }
+                        if (idx >= 0) transactions[idx] = c;
+                        else transactions.push(c);
                     }
-                    // Urutkan
                     transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
                     saveDataLocal();
                     renderAllUI();
@@ -1512,7 +1489,7 @@
         }
 
         // ===================================================================
-        //  LOCAL STORAGE (fallback & cache)
+        //  LOCAL STORAGE
         // ===================================================================
         function loadDataLocal() {
             try {
@@ -1537,9 +1514,7 @@
 
         function saveData() {
             saveDataLocal();
-            // Jika Firebase tersedia, sync ke cloud secara async (tanpa blocking)
             if (firestoreReady && !isSyncing) {
-                // Debounce: tunggu sebentar sebelum sync
                 clearTimeout(window._syncDebounce);
                 window._syncDebounce = setTimeout(() => {
                     syncAllToFirestore().catch(() => {});
@@ -1551,41 +1526,28 @@
         //  INIT
         // ===================================================================
         document.addEventListener('DOMContentLoaded', async function() {
-            // Load data dari localStorage dulu (cepat)
             loadDataLocal();
 
-            // Jika Firestore ready, coba load data dari cloud
             if (firestoreReady) {
                 const loaded = await loadFromFirestore();
                 if (loaded) {
-                    // Data dari cloud lebih baru, simpan ke localStorage
                     saveDataLocal();
                     showToast('Data dimuat dari cloud', 'success', 1500);
                 } else {
-                    // Jika gagal load dari cloud, seed dummy jika kosong
-                    if (products.length === 0) {
-                        seedDummyData();
-                    }
-                    // Upload data lokal ke cloud
+                    if (products.length === 0) seedDummyData();
                     await syncAllToFirestore();
                 }
-                // Mulai listener real-time
                 startFirestoreListeners();
             } else {
-                // Fallback: seed dummy jika kosong
-                if (products.length === 0) {
-                    seedDummyData();
-                }
+                if (products.length === 0) seedDummyData();
                 updateSyncStatus('offline');
             }
 
-            // Render semua UI
             renderAllUI();
             updatePosDateTime();
             setInterval(updatePosDateTime, 10000);
             document.getElementById('cashierName').textContent = CASHIER_NAME;
 
-            // Event listeners
             document.getElementById('barcodeInput').addEventListener('keydown', function(e) {
                 if (e.key === 'Enter') {
                     e.preventDefault();
@@ -1605,7 +1567,7 @@
             updateScannerStatus(false);
             document.getElementById('barcodeInput').focus();
 
-            console.log('🛒 LEK RO Mart - POS Warung siap (dengan Firebase sync)');
+            console.log('🛒 LEK RO Mart - POS dengan Firebase sync siap');
             console.log('📦 ' + products.length + ' produk, ' + transactions.length + ' transaksi.');
             console.log('⌨️  Ctrl+1 POS | Ctrl+2 Stock | Ctrl+3 History | F1 Scanner');
         });
@@ -1647,7 +1609,6 @@
                 { name: 'Roti Tawar', category: 'Makanan', buyPrice: 8000, sellPrice: 11000, stock: 7,
                     barcode: '899123456010' },
             ];
-            // Tambahkan ID unik
             dummy.forEach(p => {
                 p.id = 'prod_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
             });
@@ -1712,7 +1673,7 @@
         }
 
         // ===================================================================
-        //  SCANNER (html5-qrcode) - OPTIMIZED FOR HP
+        //  SCANNER - DIPERBAIKI
         // ===================================================================
         function toggleScanner() {
             if (isScannerOpen) {
@@ -1727,6 +1688,11 @@
             const btn = document.getElementById('scanBtn');
             const txt = document.getElementById('scanBtnText');
             const status = document.getElementById('scanStatus');
+            const errorEl = document.getElementById('scannerError');
+
+            // Reset error
+            errorEl.style.display = 'none';
+            errorEl.textContent = '';
 
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 status.textContent = '❌ Kamera tidak didukung';
@@ -1742,24 +1708,37 @@
             status.textContent = '🔴 Mengakses kamera...';
             updateScannerStatus(true);
 
+            // Bersihkan instance sebelumnya
             if (scannerInstance) {
                 try { scannerInstance.clear(); } catch (e) {}
                 scannerInstance = null;
             }
 
             const reader = document.getElementById('scanner-reader');
-            reader.innerHTML = '';
+            reader.innerHTML = ''; // Kosongkan
 
             try {
                 scannerInstance = new Html5Qrcode('scanner-reader');
-                scannerInstance.start({ facingMode: 'environment' }, {
+                const config = {
                     fps: 20,
                     qrbox: { width: 220, height: 180 },
-                    aspectRatio: 1.0
-                }, onScanSuccess, onScanError);
+                    aspectRatio: 1.0,
+                    // Untuk kompatibilitas
+                    experimentalFeatures: {
+                        useBarCodeDetectorIfSupported: false
+                    }
+                };
+                scannerInstance.start({ facingMode: 'environment' },
+                    config,
+                    onScanSuccess,
+                    onScanError
+                );
                 showToast('Kamera aktif, arahkan ke barcode', 'info', 2000);
             } catch (err) {
+                console.error('Scanner start error:', err);
                 status.textContent = '❌ Gagal: ' + err.message;
+                errorEl.style.display = 'block';
+                errorEl.textContent = 'Gagal memulai kamera: ' + err.message;
                 isScannerOpen = false;
                 txt.textContent = 'Buka Kamera';
                 btn.classList.remove('btn-primary');
@@ -1775,7 +1754,9 @@
                 try {
                     scannerInstance.stop();
                     scannerInstance.clear();
-                } catch (e) {}
+                } catch (e) {
+                    console.warn('Error stopping scanner:', e);
+                }
                 scannerInstance = null;
             }
             document.getElementById('scanner-container').style.display = 'none';
@@ -1786,11 +1767,14 @@
             document.getElementById('scanStatus').textContent = 'Manual';
             updateScannerStatus(false);
             stockScanMode = false;
+            // Hapus error
+            document.getElementById('scannerError').style.display = 'none';
         }
 
         function onScanSuccess(decodedText) {
             try { navigator.vibrate && navigator.vibrate(80); } catch (e) {}
 
+            // Jika mode stock scan
             if (stockScanMode) {
                 document.getElementById('pBarcode').value = decodedText;
                 document.getElementById('scanner-result').textContent = '✅ Barcode terisi: ' + decodedText;
@@ -1800,9 +1784,11 @@
                 return;
             }
 
+            // Mode POS
             document.getElementById('barcodeInput').value = decodedText;
             document.getElementById('scanner-result').textContent = '📦 Barcode: ' + decodedText;
             addProductByBarcode(decodedText);
+            // Tutup scanner setelah 300ms
             setTimeout(() => {
                 closeScanner();
                 document.getElementById('barcodeInput').focus();
@@ -1810,7 +1796,7 @@
         }
 
         function onScanError(err) {
-            // Abaikan error scanning
+            // Abaikan error scanning (biasanya noise)
         }
 
         function updateScannerStatus(active) {
@@ -1825,6 +1811,19 @@
                 dot.className = 'dot inactive';
                 txt.textContent = 'Scanner siap';
                 dev.textContent = '—';
+            }
+        }
+
+        // ===================================================================
+        //  MANUAL BARCODE INPUT
+        // ===================================================================
+        function manualBarcodeInput() {
+            const code = prompt('Masukkan kode barcode manual:');
+            if (code && code.trim()) {
+                document.getElementById('barcodeInput').value = code.trim();
+                addProductByBarcode(code.trim());
+                document.getElementById('barcodeInput').value = '';
+                document.getElementById('barcodeInput').focus();
             }
         }
 
@@ -2006,7 +2005,6 @@
             }
             const change = received - total;
 
-            // Kurangi stok
             cart.forEach(cartItem => {
                 const product = products.find(p => p.id === cartItem.productId);
                 if (product) {
@@ -2040,7 +2038,6 @@
             showReceipt(transaction);
             showToast('Transaksi berhasil!', 'success', 2000);
 
-            // Sync ke cloud
             if (firestoreReady) {
                 syncAllToFirestore().catch(() => {});
             }
@@ -2157,7 +2154,6 @@
             renderStockTable();
             renderProducts(document.getElementById('searchProduct').value);
             showToast(`Stok ${p.name} bertambah ${num}`, 'success');
-            // Sync ke cloud
             if (firestoreReady) {
                 syncAllToFirestore().catch(() => {});
             }
@@ -2282,7 +2278,6 @@
             saveData();
             renderHistory();
             if (firestoreReady) {
-                // Hapus semua di Firestore
                 db.collection(COLLECTION_TRANSACTIONS).get().then(snap => {
                     const batch = db.batch();
                     snap.forEach(doc => batch.delete(doc.ref));
@@ -2347,7 +2342,7 @@
             }
         });
 
-        console.log('🛒 LEK RO Mart - POS dengan Firebase sync siap!');
+        console.log('🛒 LEK RO Mart - POS dengan Firebase sync siap');
         console.log('📦 ' + products.length + ' produk, ' + transactions.length + ' transaksi.');
         console.log('⌨️  Ctrl+1 POS | Ctrl+2 Stock | Ctrl+3 History | F1 Scanner');
         console.log('📡 Status Firestore:', firestoreReady ? 'Tersambung' : 'Offline');
