@@ -28,7 +28,6 @@
             display: flex;
             min-height: 100vh;
         }
-        /* scrollbar */
         ::-webkit-scrollbar {
             width: 6px;
             height: 6px;
@@ -1018,8 +1017,6 @@
 
                         <!-- Summary -->
                         <div class="payment-summary mt-3">
-                            <div class="row"><span class="label">Subtotal</span><span class="value" id="subtotalDisplay">Rp 0</span></div>
-                            <div class="row"><span class="label">Pajak (10%)</span><span class="value" id="taxDisplay">Rp 0</span></div>
                             <div class="row total"><span class="label">Total</span><span class="value" id="totalDisplay">Rp 0</span></div>
                         </div>
 
@@ -1201,10 +1198,9 @@
         let currentTransaction = null;
         let scannerInstance = null;
         let isScannerOpen = false;
-        let stockScanMode = false; // untuk form tambah barang
+        let stockScanMode = false;
 
         const CASHIER_NAME = 'Admin';
-        const TAX_RATE = 0.10;
         const STORE_NAME = 'LEK RO Mart';
         const STORE_ADDR = 'Jl. Warung No. 88, Kota';
         const STORE_PHONE = '0812-3456-7890';
@@ -1303,7 +1299,6 @@
             document.getElementById('page-' + page).classList.add('active');
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
             document.querySelector(`.nav-item[data-page="${page}"]`).classList.add('active');
-            // close mobile sidebar
             closeSidebar();
             if (page === 'pos') document.getElementById('barcodeInput').focus();
             if (page === 'stock') renderStockTable();
@@ -1355,7 +1350,7 @@
         }
 
         // ===================================================================
-        //  SCANNER (html5-qrcode)
+        //  SCANNER (html5-qrcode) - DIPERBAIKI
         // ===================================================================
         function toggleScanner() {
             if (isScannerOpen) {
@@ -1376,6 +1371,7 @@
                 return;
             }
 
+            // Tampilkan container
             container.style.display = 'block';
             btn.classList.add('btn-primary');
             btn.classList.remove('btn-secondary');
@@ -1384,8 +1380,9 @@
             status.textContent = '🔴 Mengakses kamera...';
             updateScannerStatus(true);
 
+            // Bersihkan instance sebelumnya
             if (scannerInstance) {
-                scannerInstance.clear();
+                try { scannerInstance.clear(); } catch (e) {}
                 scannerInstance = null;
             }
 
@@ -1424,12 +1421,15 @@
             isScannerOpen = false;
             document.getElementById('scanStatus').textContent = 'Manual';
             updateScannerStatus(false);
+            // Jika mode stock scan, matikan
+            stockScanMode = false;
         }
 
         function onScanSuccess(decodedText) {
-            // vibra jika support
+            // Vibrasi jika support
             try { navigator.vibrate && navigator.vibrate(80); } catch (e) {}
-            // jika mode stock scan
+
+            // Jika mode stock scan
             if (stockScanMode) {
                 document.getElementById('pBarcode').value = decodedText;
                 document.getElementById('scanner-result').textContent = '✅ Barcode terisi: ' + decodedText;
@@ -1437,11 +1437,12 @@
                 closeScanner();
                 return;
             }
-            // mode POS
+
+            // Mode POS
             document.getElementById('barcodeInput').value = decodedText;
             document.getElementById('scanner-result').textContent = '📦 Barcode terdeteksi: ' + decodedText;
             addProductByBarcode(decodedText);
-            // tutup scanner setelah scan berhasil
+            // Tutup scanner setelah berhasil
             setTimeout(() => {
                 closeScanner();
                 document.getElementById('barcodeInput').focus();
@@ -1449,7 +1450,7 @@
         }
 
         function onScanError(err) {
-            // ignore
+            // Abaikan error scanning (biasanya noise)
         }
 
         function updateScannerStatus(active) {
@@ -1479,7 +1480,7 @@
             }
             if (list.length === 0) {
                 container.innerHTML =
-                `<div class="text-center text-gray-400 col-span-full py-6 text-sm">Tidak ada produk</div>`;
+                    `<div class="text-center text-gray-400 col-span-full py-6 text-sm">Tidak ada produk</div>`;
                 return;
             }
             container.innerHTML = list.map(p => `
@@ -1551,8 +1552,6 @@
 
             if (cart.length === 0) {
                 container.innerHTML = `<div class="text-center text-gray-400 py-8 text-sm">Keranjang kosong</div>`;
-                document.getElementById('subtotalDisplay').textContent = 'Rp 0';
-                document.getElementById('taxDisplay').textContent = 'Rp 0';
                 document.getElementById('totalDisplay').textContent = 'Rp 0';
                 document.getElementById('changeDisplay').textContent = 'Rp 0';
                 return;
@@ -1604,11 +1603,7 @@
         }
 
         function updateCartSummary() {
-            const subtotal = cart.reduce((sum, c) => sum + c.price * c.qty, 0);
-            const tax = Math.round(subtotal * TAX_RATE);
-            const total = subtotal + tax;
-            document.getElementById('subtotalDisplay').textContent = formatRupiah(subtotal);
-            document.getElementById('taxDisplay').textContent = formatRupiah(tax);
+            const total = cart.reduce((sum, c) => sum + c.price * c.qty, 0);
             document.getElementById('totalDisplay').textContent = formatRupiah(total);
             calculateChange();
         }
@@ -1625,8 +1620,7 @@
         }
 
         function getTotal() {
-            const subtotal = cart.reduce((sum, c) => sum + c.price * c.qty, 0);
-            return subtotal + Math.round(subtotal * TAX_RATE);
+            return cart.reduce((sum, c) => sum + c.price * c.qty, 0);
         }
 
         function quickPay(amount) {
@@ -1668,8 +1662,7 @@
                 date: new Date().toISOString(),
                 cashier: CASHIER_NAME,
                 items: cart.map(c => ({ ...c })),
-                subtotal: cart.reduce((s, c) => s + c.price * c.qty, 0),
-                tax: Math.round(cart.reduce((s, c) => s + c.price * c.qty, 0) * TAX_RATE),
+                subtotal: total,
                 total: total,
                 received: received,
                 change: change,
@@ -1720,8 +1713,6 @@
                     </div>
                     <div class="receipt-divider"></div>
                     <div class="receipt-totals">
-                        <div class="total-row"><span class="label">Subtotal</span><span>${formatRupiah(transaction.subtotal)}</span></div>
-                        <div class="total-row"><span class="label">Pajak 10%</span><span>${formatRupiah(transaction.tax)}</span></div>
                         <div class="total-row grand"><span class="label">TOTAL</span><span>${formatRupiah(transaction.total)}</span></div>
                         <div class="total-row"><span class="label">Tunai</span><span>${formatRupiah(transaction.received)}</span></div>
                         <div class="total-row"><span class="label">Kembalian</span><span>${formatRupiah(transaction.change)}</span></div>
@@ -1916,14 +1907,12 @@
         //  KEYBOARD SHORTCUTS
         // ===================================================================
         document.addEventListener('keydown', function(e) {
-            // Ctrl+1 -> POS, Ctrl+2 -> Stock, Ctrl+3 -> History
             if (e.ctrlKey && e.key === '1') { e.preventDefault();
                 switchPage('pos'); }
             if (e.ctrlKey && e.key === '2') { e.preventDefault();
                 switchPage('stock'); }
             if (e.ctrlKey && e.key === '3') { e.preventDefault();
                 switchPage('history'); }
-            // Escape untuk tutup modal
             if (e.key === 'Escape') {
                 if (document.getElementById('receiptModal').classList.contains('open')) {
                     closeReceipt();
@@ -1932,7 +1921,6 @@
                     closeScanner();
                 }
             }
-            // F1 untuk toggle scanner
             if (e.key === 'F1') {
                 e.preventDefault();
                 if (document.getElementById('page-pos').classList.contains('active')) {
@@ -1963,7 +1951,6 @@
         // ===================================================================
         document.addEventListener('click', function() {
             if (document.getElementById('page-pos').classList.contains('active') && !isScannerOpen) {
-                // hanya jika tidak ada input lain yang focus
                 const active = document.activeElement;
                 if (!active || active.tagName !== 'INPUT') {
                     document.getElementById('barcodeInput').focus();
@@ -1971,7 +1958,7 @@
             }
         });
 
-        console.log('🛒 LEK RO Mart - POS Warung siap!');
+        console.log('🛒 LEK RO Mart - POS Warung siap (tanpa PPN)');
         console.log('📦 ' + products.length + ' produk, ' + transactions.length + ' transaksi tersimpan.');
         console.log('⌨️  Shortcut: Ctrl+1 POS | Ctrl+2 Stock | Ctrl+3 History | F1 Scanner');
     </script>
